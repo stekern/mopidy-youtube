@@ -105,7 +105,7 @@ class YouTubeLibraryProvider(backend.LibraryProvider):
             try:
                 videoIds = search_youtube(search_query)
             except Exception as e:
-                logger.error("Error when searching in youtube: %s", str(e))
+                logger.error("Error when searching in youtube: %s", repr(e))
                 return None
 
             if len(videoIds) > 0:
