@@ -18,19 +18,6 @@ from mopidy_youtube import logger
 video_uri_prefix = 'youtube:video'
 search_uri = 'youtube:search'
 
-def list_unique(seq, idfun=None): 
-   # https://www.peterbe.com/plog/uniqifiers-benchmark
-   if idfun is None:
-       def idfun(x): return x
-   seen = {}
-   result = []
-   for item in seq:
-       marker = idfun(item)
-       if marker in seen: continue
-       seen[marker] = 1
-       result.append(item)
-   return result
-
 class YouTubeBackend(pykka.ThreadingActor, backend.Backend):
     def __init__(self, config, audio):
         super(YouTubeBackend, self).__init__()
@@ -43,6 +30,7 @@ class YouTubeBackend(pykka.ThreadingActor, backend.Backend):
 
 class YouTubeLibraryProvider(backend.LibraryProvider):
     def lookup(self, uri=None):
+        logger.debug("Performing lookup for '%s'", uri)
         if uri.startswith('yt:'):
             uri = uri[len('yt:'):]
         elif uri.startswith('youtube:'):
@@ -63,7 +51,6 @@ class YouTubeLibraryProvider(backend.LibraryProvider):
                 videoList = [ytUri]
 
         result = []
-
         for video in videoList:
             track = Track(
                 name=video['title'],
@@ -76,9 +63,7 @@ class YouTubeLibraryProvider(backend.LibraryProvider):
                 ),
                 uri="yt:" + video['webpage_url']
             )
-
             result.append(track)
-            logger.debug("Found video '%s'", track.uri)
 
         return result
 
@@ -98,22 +83,29 @@ class YouTubeLibraryProvider(backend.LibraryProvider):
 
             try:
                 r = requests.get("https://www.youtube.com/results", params={"search_query": search_query})
-                videoIds = re.findall(r'href=\"\/watch\?v=(.{11})', r.text)
-                videoIds = list_unique(videoIds)
-                logger.debug("Found the following IDs '%s'", videoIds)
+                regex = r'<a href="/watch\?v=(?P<id>.{11})" class=".*?" data-sessionlink=".*?"  title="(?P<title>.+?)" .+?Duration: (?P<duration>[0-9]+:[0-9]{2}).</span>.*?<div class="yt-lockup-description[^>]*>(?P<description>.*?)</div>'
+                trackList = []
+                for match in re.finditer(regex, r.text):
+                    track = Track(
+                        name=match.group('title'),
+                        comment=match.group('description'),
+                        length=1000,
+                        bitrate=1, #fake bitrate
+                        album=Album(
+                            name='YouTube',
+                            images=[]#no images
+                        ),
+                        uri="yt:https://www.youtube.com/watch?v=%s" % match.group('id')
+                    )
+                    trackList.append(track)
+                    logger.debug("Found '%s'", track.uri)
+
             except Exception as e:
                 logger.error("Error when searching in youtube: %s", repr(e))
                 return None
 
-            if len(videoIds) > 0:
-                resolve_pool = ThreadPool(processes=min(16, len(videoIds)))
-                trackList = resolve_pool.map(self.lookup, videoIds)
-                resolve_pool.close()
-
-                trackList = list(chain.from_iterable(trackList))
-            else:
-                logger.info("Searching YouTube for query '%s', nothing found",
-                            search_query)
+            if len(trackList) == 0:
+                logger.info("Searching YouTube for query '%s', nothing found", search_query)
                 return None
 
         return SearchResult(
