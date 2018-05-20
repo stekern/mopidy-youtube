@@ -4,6 +4,7 @@ from __future__ import unicode_literals
 
 from itertools import chain
 from multiprocessing.pool import ThreadPool
+from collections import OrderedDict
 
 from mopidy import backend
 from mopidy.models import Album, SearchResult, Track
@@ -17,6 +18,49 @@ from mopidy_youtube import logger
 
 video_uri_prefix = 'youtube:video'
 search_uri = 'youtube:search'
+
+# https://stackoverflow.com/a/2437645
+class LimitedSizeDict(OrderedDict):
+  def __init__(self, *args, **kwds):
+    self.size_limit = kwds.pop("size_limit", None)
+    OrderedDict.__init__(self, *args, **kwds)
+    self._check_size_limit()
+
+  def __setitem__(self, key, value):
+    OrderedDict.__setitem__(self, key, value)
+    self._check_size_limit()
+
+  def _check_size_limit(self):
+    if self.size_limit is not None:
+      while len(self) > self.size_limit:
+        self.popitem(last=False)
+
+# https://stackoverflow.com/a/6798042
+class Singleton(type):
+    _instances = {}
+    def __call__(cls, *args, **kwargs):
+        if cls not in cls._instances:
+            cls._instances[cls] = super(Singleton, cls).__call__(*args, **kwargs)
+        return cls._instances[cls]
+
+class YDLCache(object):
+    __metaclass__ = Singleton
+
+    def __init__(self):
+        self._cache = LimitedSizeDict(size_limit=1000)
+
+    def extract_info(self, url, download=True, ie_key=None, extra_info={}, process=True, force_generic_extractor=False):
+        if url in self._cache:
+            logger.debug("Found in cache: '%s'", url)
+            return self._cache[url]
+        else:
+            ytOpts = {
+                      'format': 'bestaudio/best'
+            }
+            with youtube_dl.YoutubeDL(ytOpts) as ydl:
+                logger.debug("Not found in cache, calling extract_info(): '%s'", url)
+                self._cache[url] = ydl.extract_info(url, download=download, ie_key=ie_key, extra_info=extra_info, process=process, force_generic_extractor=force_generic_extractor)
+                return self._cache[url]
 
 class YouTubeBackend(pykka.ThreadingActor, backend.Backend):
     def __init__(self, config, audio):
@@ -36,19 +80,15 @@ class YouTubeLibraryProvider(backend.LibraryProvider):
         elif uri.startswith('youtube:'):
             uri = uri[len('youtube:'):]
 
-        ytOpts = {
-                  'format': 'bestaudio/best'
-        }
-        with youtube_dl.YoutubeDL(ytOpts) as ydl:
-            ytUri = ydl.extract_info(
-                url=uri,
-                download=False
-            )
+        ytUri = YDLCache().extract_info(
+            url=uri,
+            download=False
+        )
 
-            if 'entries' in ytUri:  # if playlist
-                videoList = ytUri['entries']
-            else:
-                videoList = [ytUri]
+        if 'entries' in ytUri:  # if playlist
+            videoList = ytUri['entries']
+        else:
+            videoList = [ytUri]
 
         result = []
         for video in videoList:
@@ -122,18 +162,14 @@ class YouTubePlaybackProvider(backend.PlaybackProvider):
         elif uri.startswith('youtube:'):
             uri = uri[len('youtube:'):]
 
-        ytOpts = {
-            'format': 'bestaudio/best'
-        }
-        with youtube_dl.YoutubeDL(ytOpts) as ydl:
-            ytInfo = ydl.extract_info(
-                url=uri,
-                download=False
-            )
+        ytInfo = YDLCache().extract_info(
+            url=uri,
+            download=False
+        )
 
-            if 'url' in ytInfo:
-                logger.debug("URL '%s'", ytInfo['url'])
-                return ytInfo['url']
-            else:
-                logger.debug("URL: None")
-                return None
+        if 'url' in ytInfo:
+            logger.debug("URL '%s'", ytInfo['url'])
+            return ytInfo['url']
+        else:
+            logger.debug("URL: None")
+            return None
