@@ -9,34 +9,27 @@ from mopidy import backend
 from mopidy.models import Album, SearchResult, Track
 
 import pykka
-
 import requests
-
+import re
 import youtube_dl
 
 from mopidy_youtube import logger
 
-yt_api_endpoint = 'https://www.googleapis.com/youtube/v3/'
-yt_key = 'AIzaSyAl1Xq9DwdE_KD4AtPaE4EJl3WZe2zCqg4'
-session = requests.Session()
-
 video_uri_prefix = 'youtube:video'
 search_uri = 'youtube:search'
 
-
-def search_youtube(q):
-    query = {
-        'part': 'id',
-        'maxResults': 15,
-        'type': 'video',
-        'q': q,
-        'key': yt_key
-    }
-    result = session.get(yt_api_endpoint + 'search', params=query)
-    data = result.json()
-
-    return [item['id']['videoId'] for item in data['items']]
-
+def list_unique(seq, idfun=None): 
+   # https://www.peterbe.com/plog/uniqifiers-benchmark
+   if idfun is None:
+       def idfun(x): return x
+   seen = {}
+   result = []
+   for item in seq:
+       marker = idfun(item)
+       if marker in seen: continue
+       seen[marker] = 1
+       result.append(item)
+   return result
 
 class YouTubeBackend(pykka.ThreadingActor, backend.Backend):
     def __init__(self, config, audio):
@@ -85,6 +78,7 @@ class YouTubeLibraryProvider(backend.LibraryProvider):
             )
 
             result.append(track)
+            logger.debug("Found video '%s'", track.uri)
 
         return result
 
@@ -103,7 +97,10 @@ class YouTubeLibraryProvider(backend.LibraryProvider):
             logger.debug("Searching YouTube for query '%s'", search_query)
 
             try:
-                videoIds = search_youtube(search_query)
+                r = requests.get("https://www.youtube.com/results", params={"search_query": search_query})
+                videoIds = re.findall(r'href=\"\/watch\?v=(.{11})', r.text)
+                videoIds = list_unique(videoIds)
+                logger.debug("Found the following IDs '%s'", videoIds)
             except Exception as e:
                 logger.error("Error when searching in youtube: %s", repr(e))
                 return None
@@ -127,6 +124,7 @@ class YouTubeLibraryProvider(backend.LibraryProvider):
 
 class YouTubePlaybackProvider(backend.PlaybackProvider):
     def translate_uri(self, uri):
+        logger.debug("Translating uri '%s'", uri)
         if uri.startswith('yt:'):
             uri = uri[len('yt:'):]
         elif uri.startswith('youtube:'):
@@ -142,6 +140,8 @@ class YouTubePlaybackProvider(backend.PlaybackProvider):
             )
 
             if 'url' in ytInfo:
+                logger.debug("URL '%s'", ytInfo['url'])
                 return ytInfo['url']
             else:
+                logger.debug("URL: None")
                 return None
