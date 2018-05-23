@@ -7,7 +7,7 @@ from multiprocessing.pool import ThreadPool
 from collections import OrderedDict
 
 from mopidy import backend
-from mopidy.models import Album, SearchResult, Track
+from mopidy.models import Album, SearchResult, Track, Artist
 
 import pykka
 import requests
@@ -97,6 +97,10 @@ class YouTubeLibraryProvider(backend.LibraryProvider):
                 comment=video['description'],
                 length=video['duration'] * 1000,
                 bitrate=video['abr'],
+                artists=[Artist(
+                    name=video['uploader'], 
+#                   uri='https://www.youtube.com/channel/' + video['uploader_id'],
+                )],
                 album=Album(
                     name='YouTube',
                     images=[img['url'] for img in video['thumbnails']]
@@ -123,18 +127,20 @@ class YouTubeLibraryProvider(backend.LibraryProvider):
 
             try:
                 r = requests.get("https://www.youtube.com/results", params={"search_query": search_query})
-                regex = r'<a href="/watch\?v=(?P<id>.{11})" class=".*?" data-sessionlink=".*?"  title="(?P<title>.+?)" .+?Duration: (?P<duration>[0-9]+:[0-9]{2}).</span>.*?<div class="yt-lockup-description[^>]*>(?P<description>.*?)</div>'
+                regex = r'<a href="/watch\?v=(?P<id>.{11})" class=".*?" data-sessionlink=".*?"  title="(?P<title>.+?)" .+?Duration: (?P<durationMinutes>[0-9]+):(?P<durationSeconds>[0-9]{2}).</span>.*?<a href="/channel/(?P<channelId>[^"]+)"[^>]+>(?P<uploader>.*?)</a>.*?<div class="yt-lockup-description[^>]*>(?P<description>.*?)</div>'
                 trackList = []
                 for match in re.finditer(regex, r.text):
                     track = Track(
                         name=match.group('title'),
                         comment=match.group('description'),
-                        length=1000,
-                        bitrate=1, #fake bitrate
-                        album=Album(
-                            name='YouTube',
-                            images=[]#no images
-                        ),
+                        length=(int(match.group('durationMinutes')) * 60 + int(match.group('durationSeconds'))) * 1000,
+                        artists=[Artist(
+                            name=match.group("uploader"), 
+#                            uri='https://www.youtube.com/channel/' + match.group('channelId')
+                            )],
+                            album=Album(
+                                name='YouTube'
+                            ),
                         uri="yt:https://www.youtube.com/watch?v=%s" % match.group('id')
                     )
                     trackList.append(track)
