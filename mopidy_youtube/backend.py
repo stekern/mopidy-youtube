@@ -112,8 +112,6 @@ class YouTubeLibraryProvider(backend.LibraryProvider):
         return result
 
     def search(self, query=None, uris=None, exact=False):
-        # TODO Support exact search
-
         if not query:
             return None
 
