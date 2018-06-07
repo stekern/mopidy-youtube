@@ -123,36 +123,44 @@ class YouTubeLibraryProvider(backend.LibraryProvider):
 
         else:
             search_query = ' '.join(query.values()[0])
-            logger.debug("Searching YouTube for query '%s'", search_query)
+            if search_query.startswith("https://www.youtube.com/watch?v=") or search_query.startswith("https://youtu.be/"):
+                trackList = self.lookup(search_query)
+            else:
+                logger.debug("Searching YouTube for query '%s'", search_query)
 
-            try:
-                r = requests.get("https://www.youtube.com/results", params={"search_query": search_query})
-                regex = r'<a href="/watch\?v=(?P<id>.{11})" class=".*?" data-sessionlink=".*?"  title="(?P<title>.+?)" .+?Duration: (?P<durationMinutes>[0-9]+):(?P<durationSeconds>[0-9]{2}).</span>.*?<a href="/channel/(?P<channelId>[^"]+)"[^>]+>(?P<uploader>.*?)</a>.*?<div class="yt-lockup-description[^>]*>(?P<description>.*?)</div>'
-                trackList = []
-                for match in re.finditer(regex, r.text):
-                    track = Track(
-                        name=match.group('title'),
-                        comment=match.group('description'),
-                        length=(int(match.group('durationMinutes')) * 60 + int(match.group('durationSeconds'))) * 1000,
-                        artists=[Artist(
-                            name=match.group("uploader"), 
-#                            uri='https://www.youtube.com/channel/' + match.group('channelId')
-                            )],
-                            album=Album(
-                                name='YouTube'
-                            ),
-                        uri="yt:https://www.youtube.com/watch?v=%s" % match.group('id')
-                    )
-                    trackList.append(track)
-                    logger.debug("Found '%s'", track.uri)
+                try:
+                    r = requests.get("https://www.youtube.com/results", params={"search_query": search_query})
+                    logger.debug(r.text)
+                    regex = r'<a href="/watch\?v=(?P<id>.{11})" class=".*?" data-sessionlink=".*?"  title="(?P<title>.+?)" .+?Duration: (?:(?P<durationHours>[0-9]+):)?(?P<durationMinutes>[0-9]+):(?P<durationSeconds>[0-9]{2}).</span>.*?<a href="/channel/(?P<channelId>[^"]+)"[^>]+>(?P<uploader>.*?)</a>.*?<div class="yt-lockup-description[^>]*>(?P<description>.*?)</div>'
+                    trackList = []
+                    for match in re.finditer(regex, r.text):
+                        length = int(match.group('durationSeconds')) * 1000
+                        length += int(match.group('durationMinutes')) * 60 * 1000
+                        if match.group('durationHours') != None:
+                            length += (int(match.group('durationHours'))) * 60 * 60 * 1000
+                        track = Track(
+                            name=match.group('title'),
+                            comment=match.group('description'),
+                            length=length,
+                            artists=[Artist(
+                                name=match.group("uploader"),
+    #                            uri='https://www.youtube.com/channel/' + match.group('channelId')
+                                )],
+                                album=Album(
+                                    name='YouTube'
+                                ),
+                            uri="yt:https://www.youtube.com/watch?v=%s" % match.group('id')
+                        )
+                        trackList.append(track)
+                        logger.debug("Found '%s'", track.uri)
 
-            except Exception as e:
-                logger.error("Error when searching in youtube: %s", repr(e))
-                return None
+                except Exception as e:
+                    logger.error("Error when searching in youtube: %s", repr(e))
+                    return None
 
-            if len(trackList) == 0:
-                logger.info("Searching YouTube for query '%s', nothing found", search_query)
-                return None
+                if len(trackList) == 0:
+                    logger.info("Searching YouTube for query '%s', nothing found", search_query)
+                    return None
 
         return SearchResult(
             uri=search_uri,
