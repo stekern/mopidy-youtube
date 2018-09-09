@@ -127,9 +127,10 @@ class YouTubeLibraryProvider(backend.LibraryProvider):
                 logger.debug("Searching YouTube for query '%s'", search_query)
 
                 try:
-                    r = requests.get("https://www.youtube.com/results", params={"search_query": search_query})
+                    headers = {"Accept-Language": "en-US,en;q=0.5"}
+                    r = requests.get("https://www.youtube.com/results", params={"search_query": search_query}, headers=headers)
                     logger.debug(r.text)
-                    regex = r'<a href="/watch\?v=(?P<id>.{11})" class=".*?" data-sessionlink=".*?"  title="(?P<title>.+?)" .+?Duration: (?:(?P<durationHours>[0-9]+):)?(?P<durationMinutes>[0-9]+):(?P<durationSeconds>[0-9]{2}).</span>.*?<a href="(?P<uploaderUrl>/(?:user|channel)/[^"]+)"[^>]+>(?P<uploader>.*?)</a>.*?<div class="yt-lockup-description[^>]*>(?P<description>.*?)</div>'
+                    regex = r'<a href="/watch\?v=(?P<id>.{11})" class=".*?" data-sessionlink=".*?"  title="(?P<title>.+?)" .+?Duration: (?:(?P<durationHours>[0-9]+):)?(?P<durationMinutes>[0-9]+):(?P<durationSeconds>[0-9]{2}).?</span>.*?<a href="(?P<uploaderUrl>/(?:user|channel)/[^"]+)"[^>]+>(?P<uploader>.*?)</a>.*?<div class="yt-lockup-description[^>]*>(?P<description>.*?)</div>'
                     trackList = []
                     for match in re.finditer(regex, r.text):
                         length = int(match.group('durationSeconds')) * 1000
