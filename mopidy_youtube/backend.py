@@ -14,6 +14,9 @@ import requests
 import re
 import youtube_dl
 
+import HTMLParser
+from lxml import etree, html
+
 from mopidy_youtube import logger
 
 video_uri_prefix = 'youtube:video'
@@ -73,6 +76,11 @@ class YouTubeBackend(pykka.ThreadingActor, backend.Backend):
 
 
 class YouTubeLibraryProvider(backend.LibraryProvider):
+    PARSER = HTMLParser.HTMLParser()
+
+    def _unescape(self, text):
+        return self.PARSER.unescape(text)
+
     def lookup(self, uri=None):
         logger.debug("Performing lookup for '%s'", uri)
         if uri.startswith('yt:'):
@@ -111,7 +119,34 @@ class YouTubeLibraryProvider(backend.LibraryProvider):
 
         return result
 
-    def search(self, query=None, uris=None, exact=False):
+    def _fetch_results(self, obj):
+        r = requests.get(obj["url"], params=obj['params'], headers=obj["headers"])
+        regex = r'<a href="/watch\?v=(?P<id>.{11})" class=".*?" data-sessionlink=".*?"  title="(?P<title>.+?)" .+?Duration: (?:(?P<durationHours>[0-9]+):)?(?P<durationMinutes>[0-9]+):(?P<durationSeconds>[0-9]{2}).?</span>.*?<a href="(?P<uploaderUrl>/(?:user|channel)/[^"]+)"[^>]+>(?P<uploader>.*?)</a>.*?<div class="yt-lockup-description[^>]*>(?P<description>.*?)</div>'
+        trackList = []
+        for match in re.finditer(regex, self._unescape(r.text)):
+            length = int(match.group('durationSeconds')) * 1000
+            length += int(match.group('durationMinutes')) * 60 * 1000
+            if match.group('durationHours') != None:
+                length += (int(match.group('durationHours'))) * 60 * 60 * 1000
+            track = Track(
+                name=match.group('title'),
+                comment=match.group('description'),
+                length=length,
+                artists=[Artist(
+                    name=match.group("uploader"),
+    #                            uri='https://www.youtube.com/channel/' + match.group('uploaderUrl')
+                    )],
+                    album=Album(
+                        name='YouTube'
+                    ),
+                uri="yt:https://www.youtube.com/watch?v=%s" % match.group('id')
+            )
+            trackList.append(track)
+            logger.debug("Found '%s'", track.name)
+        return trackList
+
+
+    def search(self, query=None, uris=None, exact=False, pages=3):
         if not query:
             return None
 
@@ -124,34 +159,15 @@ class YouTubeLibraryProvider(backend.LibraryProvider):
             if search_query.startswith("https://www.youtube.com/watch?v=") or search_query.startswith("https://youtu.be/"):
                 trackList = self.lookup(search_query)
             else:
-                logger.debug("Searching YouTube for query '%s'", search_query)
+                logger.info("Searching YouTube for query '%s' and fetching %d pages of results", search_query, pages)
 
                 try:
                     headers = {"Accept-Language": "en-US,en;q=0.5"}
-                    r = requests.get("https://www.youtube.com/results", params={"search_query": search_query}, headers=headers)
-                    logger.debug(r.text)
-                    regex = r'<a href="/watch\?v=(?P<id>.{11})" class=".*?" data-sessionlink=".*?"  title="(?P<title>.+?)" .+?Duration: (?:(?P<durationHours>[0-9]+):)?(?P<durationMinutes>[0-9]+):(?P<durationSeconds>[0-9]{2}).?</span>.*?<a href="(?P<uploaderUrl>/(?:user|channel)/[^"]+)"[^>]+>(?P<uploader>.*?)</a>.*?<div class="yt-lockup-description[^>]*>(?P<description>.*?)</div>'
+                    rs = [{ "url": "https://www.youtube.com/results", "params": { "search_query": search_query, "page": page + 1}, "headers": headers } for page in range(pages)]
+                    results = ThreadPool(pages).imap(self._fetch_results, rs)
                     trackList = []
-                    for match in re.finditer(regex, r.text):
-                        length = int(match.group('durationSeconds')) * 1000
-                        length += int(match.group('durationMinutes')) * 60 * 1000
-                        if match.group('durationHours') != None:
-                            length += (int(match.group('durationHours'))) * 60 * 60 * 1000
-                        track = Track(
-                            name=match.group('title'),
-                            comment=match.group('description'),
-                            length=length,
-                            artists=[Artist(
-                                name=match.group("uploader"),
-    #                            uri='https://www.youtube.com/channel/' + match.group('uploaderUrl')
-                                )],
-                                album=Album(
-                                    name='YouTube'
-                                ),
-                            uri="yt:https://www.youtube.com/watch?v=%s" % match.group('id')
-                        )
-                        trackList.append(track)
-                        logger.debug("Found '%s'", track.uri)
+                    for result in results:
+                        trackList.extend(result)
 
                 except Exception as e:
                     logger.error("Error when searching in youtube: %s", repr(e))
@@ -159,7 +175,6 @@ class YouTubeLibraryProvider(backend.LibraryProvider):
 
                 if len(trackList) == 0:
                     logger.info("Searching YouTube for query '%s', nothing found", search_query)
-                    return None
 
         return SearchResult(
             uri=search_uri,
