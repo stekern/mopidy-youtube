@@ -15,7 +15,6 @@ import re
 import youtube_dl
 
 import HTMLParser
-from lxml import etree, html
 
 from mopidy_youtube import logger
 

@@ -24,7 +24,6 @@ setup(
     zip_safe=False,
     include_package_data=True,
     install_requires=[
-        'lxml',
         'setuptools',
         'requests >= 2.2.1',
         'youtube-dl',
