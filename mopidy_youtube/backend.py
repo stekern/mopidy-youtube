@@ -108,10 +108,7 @@ class YouTubeLibraryProvider(backend.LibraryProvider):
                     name=video['uploader'], 
 #                   uri='https://www.youtube.com/channel/' + video['uploader_id'],
                 )],
-                album=Album(
-                    name='YouTube',
-                    images=[img['url'] for img in video['thumbnails']]
-                ),
+                album=Album(name='YouTube'),
                 uri="yt:" + video['webpage_url']
             )
             result.append(track)
